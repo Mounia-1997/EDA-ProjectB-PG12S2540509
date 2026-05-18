@@ -805,7 +805,7 @@ st.info(
 # ==============================
 # STUDENT ADDITIONS: DASHBOARD
 # Paste additional dashboard visuals and KPIs below this marker.
-# --- Student dashboard addition: KPIs, model comparison, predictions, residuals, feature importance ---
+# --- Student dashboard addition: pink model comparison, predictions, and feature importance ---
 
 if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     st.markdown("#### Forecasting dashboard")
@@ -837,7 +837,7 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     )
 
     fig, ax = plt.subplots(figsize=(9, 4))
-    ax.bar(results_df["model"], results_df[metric_choice])
+    ax.bar(results_df["model"], results_df[metric_choice], color="hotpink")
     ax.set_title(f"Model Comparison by {metric_choice}")
     ax.set_xlabel("Model")
     ax.set_ylabel(metric_choice)
@@ -851,8 +851,20 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     plot_df = best_predictions.tail(plot_rows)
 
     fig, ax = plt.subplots(figsize=(12, 5))
-    ax.plot(plot_df[timestamp_column], plot_df["actual"], label="Actual")
-    ax.plot(plot_df[timestamp_column], plot_df["prediction"], label="Predicted")
+    ax.plot(
+        plot_df[timestamp_column],
+        plot_df["actual"],
+        label="Actual",
+        color="deeppink",
+        linewidth=2,
+    )
+    ax.plot(
+        plot_df[timestamp_column],
+        plot_df["prediction"],
+        label="Predicted",
+        color="lightpink",
+        linewidth=2,
+    )
     ax.set_title(f"Actual vs Predicted — {best_model}")
     ax.set_xlabel("Time")
     ax.set_ylabel(target_column)
@@ -860,34 +872,16 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     ax.tick_params(axis="x", rotation=30)
     st.pyplot(fig)
 
-    # Residuals over time
-    st.write("Residuals over time")
-
-    fig, ax = plt.subplots(figsize=(12, 4))
-    ax.plot(plot_df[timestamp_column], plot_df["residual"])
-    ax.axhline(0, linestyle="--")
-    ax.set_title(f"Residuals Over Time — {best_model}")
-    ax.set_xlabel("Time")
-    ax.set_ylabel("Actual - Predicted")
-    ax.tick_params(axis="x", rotation=30)
-    st.pyplot(fig)
-
-    # Residual distribution
-    st.write("Residual distribution")
-
-    fig, ax = plt.subplots(figsize=(10, 4))
-    ax.hist(best_predictions["residual"].dropna(), bins=40)
-    ax.set_title(f"Residual Distribution — {best_model}")
-    ax.set_xlabel("Actual - Predicted")
-    ax.set_ylabel("Frequency")
-    st.pyplot(fig)
-
     # Random Forest feature importance
     if feature_importance_df is not None and not feature_importance_df.empty:
         st.write("Random Forest feature importance")
 
         fig, ax = plt.subplots(figsize=(10, 4))
-        ax.bar(feature_importance_df["feature"], feature_importance_df["importance"])
+        ax.bar(
+            feature_importance_df["feature"],
+            feature_importance_df["importance"],
+            color="hotpink",
+        )
         ax.set_title("Random Forest Feature Importance")
         ax.set_xlabel("Feature")
         ax.set_ylabel("Importance")
@@ -911,8 +905,7 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
         **Dashboard insight:**  
         This dashboard compares Linear Regression, Random Forest Regressor, and SVR using a time-based 80/20 test split. 
         The best model is selected by RMSE because RMSE penalizes large forecasting errors more strongly than MAE. 
-        The residual plots help check whether the model is consistently overpredicting or underpredicting demand. 
-        The Random Forest feature importance chart shows which baseline features contributed most to its predictions.
+        The pink prediction chart compares actual demand against the best model's forecast, while the feature importance chart explains which baseline features were most useful for the Random Forest model.
         """
     )
 

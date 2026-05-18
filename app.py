@@ -929,6 +929,16 @@ dashboard_elements = [
 
 # --- Student dashboard addition: blue-teal-green dashboard ---
 
+has_extra_dashboard = True
+dashboard_elements = [
+    "KPI cards for best model, MAE, RMSE, and MAPE",
+    "Metrics comparison table",
+    "Model comparison bar chart",
+    "Actual versus predicted line chart",
+    "Top 10 Random Forest feature importance horizontal bar chart",
+    "Recent actual versus predicted table",
+]
+
 if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     st.markdown("#### Forecasting dashboard")
 
@@ -972,6 +982,7 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     ax.set_xlabel("Model")
     ax.set_ylabel(metric_choice)
     ax.tick_params(axis="x", rotation=20)
+    fig.tight_layout()
     st.pyplot(fig)
 
     # Actual vs predicted chart
@@ -1000,25 +1011,46 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     ax.set_ylabel(target_column)
     ax.legend()
     ax.tick_params(axis="x", rotation=30)
+    fig.tight_layout()
     st.pyplot(fig)
 
-    # Random Forest feature importance
+    # Improved Random Forest feature importance chart
     if feature_importance_df is not None and not feature_importance_df.empty:
-        st.write("Random Forest feature importance")
+        st.write("Top Random Forest feature importance")
 
-        fig, ax = plt.subplots(figsize=(10, 4))
-        ax.bar(
-            feature_importance_df["feature"],
-            feature_importance_df["importance"],
+        top_features = (
+            feature_importance_df
+            .sort_values("importance", ascending=False)
+            .head(10)
+            .sort_values("importance", ascending=True)
+        )
+
+        fig, ax = plt.subplots(figsize=(10, 6))
+        ax.barh(
+            top_features["feature"],
+            top_features["importance"],
             color=feature_color,
         )
-        ax.set_title("Random Forest Feature Importance")
-        ax.set_xlabel("Feature")
-        ax.set_ylabel("Importance")
-        ax.tick_params(axis="x", rotation=30)
+
+        ax.set_title("Top 10 Random Forest Feature Importance")
+        ax.set_xlabel("Importance")
+        ax.set_ylabel("Feature")
+
+        for index, value in enumerate(top_features["importance"]):
+            ax.text(
+                value,
+                index,
+                f" {value:.3f}",
+                va="center",
+            )
+
+        fig.tight_layout()
         st.pyplot(fig)
 
-        st.dataframe(feature_importance_df, use_container_width=True)
+        st.dataframe(
+            feature_importance_df.sort_values("importance", ascending=False),
+            use_container_width=True,
+        )
 
     # Recent prediction table
     st.write("Recent actual vs predicted values for the best model")
@@ -1036,7 +1068,7 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
         This dashboard compares Linear Regression, Random Forest Regressor, and SVR using a time-based 80/20 test split. 
         The best model is selected by RMSE because RMSE penalizes larger forecasting errors. 
         The actual-versus-predicted chart shows how closely the selected model follows MIS demand patterns. 
-        The Random Forest feature importance chart helps explain which engineered features contribute most to the forecast.
+        The horizontal feature importance chart shows the top Random Forest drivers without overlapping labels.
         """
     )
 

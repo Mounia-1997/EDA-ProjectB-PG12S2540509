@@ -385,9 +385,15 @@ def build_submission_json(
         "student_additions_evidence": {
             "has_metrics_table": has_metrics_table,
             "results_table": results_table,
-            "has_extra_dashboard": False,
+            "has_extra_features": bool(globals().get("extra_feature_columns", [])),
+            "extra_feature_columns": globals().get("extra_feature_columns", []),
+            "feature_engineering_summary": globals().get("feature_engineering_summary", ""),
+            "modeling_notes": globals().get("modeling_notes", []),
+            "has_extra_dashboard": bool(globals().get("has_extra_dashboard", False)),
+            "dashboard_elements": globals().get("dashboard_elements", []),
             "insights": student_insights,
         },
+      
     }
     return to_jsonable(evidence)
 

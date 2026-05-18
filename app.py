@@ -581,16 +581,12 @@ st.info(
 # Paste your forecasting code below this marker.
 # Keep results_df as a pandas DataFrame with one row per model and columns such as model, MAE, RMSE, and MAPE.
 # Example structure only: create results_df after you build your own model and metrics.
-# --- Student modeling addition: Linear Regression + SVR + LSTM ---
+# --- Student modeling addition: Linear Regression + Random Forest + SVR ---
 
 from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.svm import SVR
 from sklearn.preprocessing import StandardScaler
-
-import tensorflow as tf
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-from tensorflow.keras.callbacks import EarlyStopping
 
 results_df = None
 predictions_df = None
@@ -633,7 +629,7 @@ else:
     model_results = []
     prediction_frames = []
 
-    # Scale features for SVR and LSTM
+    # Scale features for SVR
     x_scaler = StandardScaler()
     X_train_scaled = x_scaler.fit_transform(X_train)
     X_test_scaled = x_scaler.transform(X_test)
@@ -675,12 +671,75 @@ else:
     )
 
     # -----------------------------
-    # Model 2: Support Vector Regression
+    # Model 2: Random Forest Regressor
     # -----------------------------
-    svr_model = SVR(kernel="rbf", C=100, epsilon=0.1)
+    rf_model = RandomForestRegressor(
+        n_estimators=100,
+        max_depth=14,
+        min_samples_leaf=5,
+        random_state=42,
+        n_jobs=-1,
+    )
 
-    # Use scaled X and scaled y for SVR
-    svr_model.fit(X_train_scaled, y_train_scaled)
+    rf_model.fit(X_train, y_train)
+    rf_pred = rf_model.predict(X_test)
+
+    rf_mae, rf_rmse, rf_mape = calculate_metrics(y_test, rf_pred)
+
+    model_results.append(
+        {
+            "model": "Random Forest Regressor",
+            "MAE": round(rf_mae, 3),
+            "RMSE": round(rf_rmse, 3),
+            "MAPE": round(rf_mape, 3),
+            "train_rows": len(X_train),
+            "test_rows": len(X_test),
+            "split_type": "time-based 80/20",
+            "forecast_horizon_rows": int(forecast_horizon),
+        }
+    )
+
+    prediction_frames.append(
+        pd.DataFrame(
+            {
+                timestamp_column: test_time,
+                "actual": actual_values,
+                "prediction": rf_pred,
+                "model": "Random Forest Regressor",
+            }
+        )
+    )
+
+    feature_importance_df = pd.DataFrame(
+        {
+            "feature": feature_columns,
+            "importance": rf_model.feature_importances_,
+        }
+    ).sort_values("importance", ascending=False)
+
+    # -----------------------------
+    # Model 3: Support Vector Regression
+    # -----------------------------
+    # SVR can be slow on large datasets, so this uses the most recent training rows.
+    max_svr_train_rows = 12000
+
+    if len(X_train_scaled) > max_svr_train_rows:
+        X_train_svr = X_train_scaled[-max_svr_train_rows:]
+        y_train_svr = y_train_scaled[-max_svr_train_rows:]
+    else:
+        X_train_svr = X_train_scaled
+        y_train_svr = y_train_scaled
+
+    svr_model = SVR(
+        kernel="rbf",
+        C=100,
+        epsilon=0.1,
+        gamma="scale",
+    )
+
+    with st.spinner("Training SVR model..."):
+        svr_model.fit(X_train_svr, y_train_svr)
+
     svr_pred_scaled = svr_model.predict(X_test_scaled)
     svr_pred = y_scaler.inverse_transform(svr_pred_scaled.reshape(-1, 1)).ravel()
 
@@ -692,7 +751,7 @@ else:
             "MAE": round(svr_mae, 3),
             "RMSE": round(svr_rmse, 3),
             "MAPE": round(svr_mape, 3),
-            "train_rows": len(X_train),
+            "train_rows": len(X_train_svr),
             "test_rows": len(X_test),
             "split_type": "time-based 80/20",
             "forecast_horizon_rows": int(forecast_horizon),
@@ -710,83 +769,15 @@ else:
         )
     )
 
-    # -----------------------------
-    # Model 3: LSTM neural network
-    # -----------------------------
-    # LSTM requires 3D input: samples, time steps, features.
-    # Here each row is treated as one time step using the engineered lag/calendar features.
-    X_train_lstm = X_train_scaled.reshape((X_train_scaled.shape[0], 1, X_train_scaled.shape[1]))
-    X_test_lstm = X_test_scaled.reshape((X_test_scaled.shape[0], 1, X_test_scaled.shape[1]))
-
-    tf.random.set_seed(42)
-
-    lstm_model = Sequential(
-        [
-            LSTM(32, input_shape=(X_train_lstm.shape[1], X_train_lstm.shape[2])),
-            Dropout(0.2),
-            Dense(16, activation="relu"),
-            Dense(1),
-        ]
-    )
-
-    lstm_model.compile(
-        optimizer="adam",
-        loss="mse",
-    )
-
-    early_stop = EarlyStopping(
-        monitor="val_loss",
-        patience=3,
-        restore_best_weights=True,
-    )
-
-    with st.spinner("Training LSTM model..."):
-        lstm_history = lstm_model.fit(
-            X_train_lstm,
-            y_train_scaled,
-            epochs=15,
-            batch_size=64,
-            validation_split=0.2,
-            callbacks=[early_stop],
-            verbose=0,
-        )
-
-    lstm_pred_scaled = lstm_model.predict(X_test_lstm, verbose=0).ravel()
-    lstm_pred = y_scaler.inverse_transform(lstm_pred_scaled.reshape(-1, 1)).ravel()
-
-    lstm_mae, lstm_rmse, lstm_mape = calculate_metrics(y_test, lstm_pred)
-
-    model_results.append(
-        {
-            "model": "LSTM",
-            "MAE": round(lstm_mae, 3),
-            "RMSE": round(lstm_rmse, 3),
-            "MAPE": round(lstm_mape, 3),
-            "train_rows": len(X_train),
-            "test_rows": len(X_test),
-            "split_type": "time-based 80/20",
-            "forecast_horizon_rows": int(forecast_horizon),
-        }
-    )
-
-    prediction_frames.append(
-        pd.DataFrame(
-            {
-                timestamp_column: test_time,
-                "actual": actual_values,
-                "prediction": lstm_pred,
-                "model": "LSTM",
-            }
-        )
-    )
-
+    # Final results for grading evidence and dashboard
     results_df = pd.DataFrame(model_results).sort_values("RMSE").reset_index(drop=True)
     predictions_df = pd.concat(prediction_frames, ignore_index=True)
 
     best_model_name = results_df.iloc[0]["model"]
 
-    st.success("Modeling completed using Linear Regression, SVR, and LSTM.")
+    st.success("Modeling completed using Linear Regression, Random Forest Regressor, and SVR.")
     st.write(f"Best model by RMSE: **{best_model_name}**")
+    st.write("The models were evaluated using a time-based 80/20 train/test split.")
 # ==============================
 
 st.code(
@@ -814,9 +805,12 @@ st.info(
 # ==============================
 # STUDENT ADDITIONS: DASHBOARD
 # Paste additional dashboard visuals and KPIs below this marker.
+# --- Student dashboard addition: KPIs, model comparison, predictions, residuals, feature importance ---
+
 if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     st.markdown("#### Forecasting dashboard")
 
+    # Select best model using RMSE
     best_row = results_df.sort_values("RMSE").iloc[0]
     best_model = best_row["model"]
 
@@ -833,18 +827,24 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     st.write("Metrics comparison table")
     st.dataframe(results_df, use_container_width=True)
 
-    # Bar chart comparing model errors
-    st.write("Model comparison by RMSE")
+    # Model comparison chart
+    st.write("Model comparison by error metrics")
+
+    metric_choice = st.selectbox(
+        "Choose metric for model comparison",
+        options=["RMSE", "MAE", "MAPE"],
+        index=0,
+    )
 
     fig, ax = plt.subplots(figsize=(9, 4))
-    ax.bar(results_df["model"], results_df["RMSE"])
-    ax.set_title("Model Comparison by RMSE")
+    ax.bar(results_df["model"], results_df[metric_choice])
+    ax.set_title(f"Model Comparison by {metric_choice}")
     ax.set_xlabel("Model")
-    ax.set_ylabel("RMSE")
+    ax.set_ylabel(metric_choice)
     ax.tick_params(axis="x", rotation=20)
     st.pyplot(fig)
 
-    # Actual vs predicted plot for best model
+    # Actual vs predicted plot for the best model
     st.write(f"Actual vs predicted demand — best model: {best_model}")
 
     plot_rows = min(500, len(best_predictions))
@@ -860,8 +860,8 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     ax.tick_params(axis="x", rotation=30)
     st.pyplot(fig)
 
-    # Residual line plot
-    st.write("Forecast residuals over time")
+    # Residuals over time
+    st.write("Residuals over time")
 
     fig, ax = plt.subplots(figsize=(12, 4))
     ax.plot(plot_df[timestamp_column], plot_df["residual"])
@@ -872,7 +872,7 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     ax.tick_params(axis="x", rotation=30)
     st.pyplot(fig)
 
-    # Residual histogram
+    # Residual distribution
     st.write("Residual distribution")
 
     fig, ax = plt.subplots(figsize=(10, 4))
@@ -882,8 +882,23 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     ax.set_ylabel("Frequency")
     st.pyplot(fig)
 
-    # Recent prediction sample
-    st.write("Recent actual vs predicted values")
+    # Random Forest feature importance
+    if feature_importance_df is not None and not feature_importance_df.empty:
+        st.write("Random Forest feature importance")
+
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.bar(feature_importance_df["feature"], feature_importance_df["importance"])
+        ax.set_title("Random Forest Feature Importance")
+        ax.set_xlabel("Feature")
+        ax.set_ylabel("Importance")
+        ax.tick_params(axis="x", rotation=30)
+        st.pyplot(fig)
+
+        st.dataframe(feature_importance_df, use_container_width=True)
+
+    # Recent prediction table
+    st.write("Recent actual vs predicted values for the best model")
+
     st.dataframe(
         best_predictions[[timestamp_column, "actual", "prediction", "residual"]]
         .tail(20)
@@ -894,9 +909,10 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     st.markdown(
         """
         **Dashboard insight:**  
-        The dashboard compares Linear Regression, SVR, and LSTM using a time-based test set. 
-        RMSE is used to select the best model because it penalizes large forecasting errors. 
-        The residual plots help identify whether the model is biased or whether errors increase during certain periods.
+        This dashboard compares Linear Regression, Random Forest Regressor, and SVR using a time-based 80/20 test split. 
+        The best model is selected by RMSE because RMSE penalizes large forecasting errors more strongly than MAE. 
+        The residual plots help check whether the model is consistently overpredicting or underpredicting demand. 
+        The Random Forest feature importance chart shows which baseline features contributed most to its predictions.
         """
     )
 

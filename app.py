@@ -385,52 +385,7 @@ def build_submission_json(
         "student_additions_evidence": {
             "has_metrics_table": has_metrics_table,
             "results_table": results_table,
-            "has_extra_features": True,
-            "extra_feature_columns": [
-                "Temperature (C)",
-                "Humidity",
-                "hour_sin",
-                "hour_cos",
-                "month_sin",
-                "month_cos",
-                "lag_168",
-                "rolling_std_24",
-                "rolling_mean_168",
-                "demand_change_24",
-                "temperature_x_lag_1",
-                "humidity_x_lag_1",
-            ],
-            "feature_engineering_summary": (
-               "Added weather variables, cyclical hour and month features, weekly lag, "
-               "24-hour rolling standard deviation, 168-hour rolling mean, 24-hour demand change, "
-               "and weather-demand interaction features beyond the starter baseline."
-            ),
-
-           "has_extra_dashboard": True,
-           "dashboard_elements": [
-              "KPI cards for best model, MAE, RMSE, and MAPE",
-              "Metrics comparison table",
-              "Model comparison bar chart",
-              "Actual versus predicted line chart",
-              "Random Forest feature importance chart",
-              "Recent actual versus predicted table",
-             ],
-            "modeling_notes": [
-                "Used a time-based 80/20 train/test split.",
-                "Compared Linear Regression, Random Forest Regressor, and SVR.",
-                "Used MAE, RMSE, and MAPE evaluation metrics.",
-                "Selected the best model using RMSE.",
-                "Used scaled features for SVR.",
-             ],
-            "data_quality_discussion": (
-                "The timestamp column was parsed to datetime and invalid timestamps were removed. "
-                "The target column was converted to numeric and invalid target rows were removed. "
-                "The cleaned dataset was sorted by timestamp. Duplicate timestamps were checked. "
-                "The dataset has complete hourly coverage, so no resampling was required by default. "
-                "Outliers were not removed automatically because extreme demand values may represent real peak demand events; "
-                "future work could compare IQR or rolling z-score outlier flags."
-            ),
-
+            "has_extra_dashboard": False,
             "insights": student_insights,
         },
     }
@@ -626,7 +581,7 @@ st.info(
 # Paste your forecasting code below this marker.
 # Keep results_df as a pandas DataFrame with one row per model and columns such as model, MAE, RMSE, and MAPE.
 # Example structure only: create results_df after you build your own model and metrics.
-# --- Student modeling addition: Linear Regression + Random Forest + SVR ---
+# --- Student modeling addition: enhanced features + Linear Regression + Random Forest + SVR ---
 
 from sklearn.linear_model import LinearRegression
 from sklearn.ensemble import RandomForestRegressor
@@ -637,18 +592,125 @@ results_df = None
 predictions_df = None
 feature_importance_df = None
 
-if feature_table.empty or len(X) < 150:
+extra_feature_columns = []
+feature_engineering_summary = ""
+modeling_notes = []
+
+if feature_table.empty or len(X) < 200:
     st.warning("Not enough rows for modeling. Try no resampling or a smaller forecast horizon.")
 else:
+    # Start from the baseline feature table created earlier
+    model_feature_table = feature_table.copy()
+
+    # Add external numeric variables from the prepared dataset, such as temperature and humidity
+    external_numeric_columns = []
+
+    for column in resampled_df.columns:
+        if column not in [timestamp_column, target_column]:
+            converted = pd.to_numeric(resampled_df[column], errors="coerce")
+            if converted.notna().mean() >= 0.70:
+                external_numeric_columns.append(column)
+
+    if external_numeric_columns:
+        external_features = resampled_df[[timestamp_column] + external_numeric_columns].copy()
+
+        for column in external_numeric_columns:
+            external_features[column] = pd.to_numeric(external_features[column], errors="coerce")
+
+        model_feature_table = model_feature_table.merge(
+            external_features,
+            on=timestamp_column,
+            how="left",
+        )
+
+    # Extra time-series features beyond the starter baseline
+    model_feature_table["hour_sin"] = np.sin(2 * np.pi * model_feature_table["hour"] / 24)
+    model_feature_table["hour_cos"] = np.cos(2 * np.pi * model_feature_table["hour"] / 24)
+    model_feature_table["month_sin"] = np.sin(2 * np.pi * model_feature_table["month"] / 12)
+    model_feature_table["month_cos"] = np.cos(2 * np.pi * model_feature_table["month"] / 12)
+
+    model_feature_table["lag_168"] = model_feature_table[target_column].shift(168)
+    model_feature_table["rolling_std_24"] = (
+        model_feature_table[target_column].shift(1).rolling(window=24).std()
+    )
+    model_feature_table["rolling_mean_168"] = (
+        model_feature_table[target_column].shift(1).rolling(window=168).mean()
+    )
+    model_feature_table["demand_change_24"] = (
+        model_feature_table["lag_1"] - model_feature_table["lag_24"]
+    )
+
+    engineered_columns = [
+        "hour_sin",
+        "hour_cos",
+        "month_sin",
+        "month_cos",
+        "lag_168",
+        "rolling_std_24",
+        "rolling_mean_168",
+        "demand_change_24",
+    ]
+
+    # Weather-demand interaction features
+    interaction_columns = []
+
+    if "Temperature (C)" in model_feature_table.columns:
+        model_feature_table["temperature_x_lag_1"] = (
+            model_feature_table["Temperature (C)"] * model_feature_table["lag_1"]
+        )
+        interaction_columns.append("temperature_x_lag_1")
+
+    if "Humidity" in model_feature_table.columns:
+        model_feature_table["humidity_x_lag_1"] = (
+            model_feature_table["Humidity"] * model_feature_table["lag_1"]
+        )
+        interaction_columns.append("humidity_x_lag_1")
+
+    extra_feature_columns = external_numeric_columns + engineered_columns + interaction_columns
+
+    model_feature_columns = feature_columns + extra_feature_columns
+    model_feature_columns = [
+        column for column in model_feature_columns
+        if column in model_feature_table.columns
+    ]
+
+    model_feature_table = model_feature_table.dropna(
+        subset=model_feature_columns + ["y_target"]
+    ).reset_index(drop=True)
+
+    X_model = model_feature_table[model_feature_columns].copy()
+    y_model = model_feature_table["y_target"].copy()
+
+    feature_engineering_summary = (
+        "Added external weather variables, cyclical hour and month features, weekly lag, "
+        "24-hour rolling standard deviation, 168-hour rolling mean, 24-hour demand change, "
+        "and weather-demand interaction features beyond the starter baseline."
+    )
+
+    modeling_notes = [
+        "Used a time-based 80/20 train/test split.",
+        "Compared Linear Regression, Random Forest Regressor, and SVR.",
+        "Used MAE, RMSE, and MAPE as evaluation metrics.",
+        "Used scaled features for SVR.",
+        "SVR was trained on the most recent training rows to reduce runtime.",
+        "Extra engineered features were used beyond the starter baseline.",
+    ]
+
+    st.write("Final model features used")
+    st.write(model_feature_columns)
+
+    st.write("Extra engineered features used")
+    st.write(extra_feature_columns)
+
     # Time-based split: first 80% for training, last 20% for testing
-    split_index = int(len(X) * 0.80)
+    split_index = int(len(X_model) * 0.80)
 
-    X_train = X.iloc[:split_index].copy()
-    X_test = X.iloc[split_index:].copy()
-    y_train = y.iloc[:split_index].copy()
-    y_test = y.iloc[split_index:].copy()
+    X_train = X_model.iloc[:split_index].copy()
+    X_test = X_model.iloc[split_index:].copy()
+    y_train = y_model.iloc[:split_index].copy()
+    y_test = y_model.iloc[split_index:].copy()
 
-    test_time = feature_table[timestamp_column].iloc[split_index:].reset_index(drop=True)
+    test_time = model_feature_table[timestamp_column].iloc[split_index:].reset_index(drop=True)
     actual_values = y_test.reset_index(drop=True)
 
     def calculate_metrics(y_true, y_pred):
@@ -659,6 +721,7 @@ else:
         rmse = np.sqrt(np.mean((y_true_array - y_pred_array) ** 2))
 
         nonzero_mask = y_true_array != 0
+
         if nonzero_mask.sum() == 0:
             mape = np.nan
         else:
@@ -701,6 +764,8 @@ else:
             "test_rows": len(X_test),
             "split_type": "time-based 80/20",
             "forecast_horizon_rows": int(forecast_horizon),
+            "feature_count": len(model_feature_columns),
+            "extra_features_used": ", ".join(extra_feature_columns),
         }
     )
 
@@ -741,6 +806,8 @@ else:
             "test_rows": len(X_test),
             "split_type": "time-based 80/20",
             "forecast_horizon_rows": int(forecast_horizon),
+            "feature_count": len(model_feature_columns),
+            "extra_features_used": ", ".join(extra_feature_columns),
         }
     )
 
@@ -757,7 +824,7 @@ else:
 
     feature_importance_df = pd.DataFrame(
         {
-            "feature": feature_columns,
+            "feature": model_feature_columns,
             "importance": rf_model.feature_importances_,
         }
     ).sort_values("importance", ascending=False)
@@ -765,7 +832,6 @@ else:
     # -----------------------------
     # Model 3: Support Vector Regression
     # -----------------------------
-    # SVR can be slow on large datasets, so this uses the most recent training rows.
     max_svr_train_rows = 12000
 
     if len(X_train_scaled) > max_svr_train_rows:
@@ -800,6 +866,8 @@ else:
             "test_rows": len(X_test),
             "split_type": "time-based 80/20",
             "forecast_horizon_rows": int(forecast_horizon),
+            "feature_count": len(model_feature_columns),
+            "extra_features_used": ", ".join(extra_feature_columns),
         }
     )
 
@@ -814,13 +882,12 @@ else:
         )
     )
 
-    # Final results for grading evidence and dashboard
     results_df = pd.DataFrame(model_results).sort_values("RMSE").reset_index(drop=True)
     predictions_df = pd.concat(prediction_frames, ignore_index=True)
 
     best_model_name = results_df.iloc[0]["model"]
 
-    st.success("Modeling completed using Linear Regression, Random Forest Regressor, and SVR.")
+    st.success("Modeling completed using enhanced features, Linear Regression, Random Forest Regressor, and SVR.")
     st.write(f"Best model by RMSE: **{best_model_name}**")
     st.write("The models were evaluated using a time-based 80/20 train/test split.")
 # ==============================
@@ -850,7 +917,17 @@ st.info(
 # ==============================
 # STUDENT ADDITIONS: DASHBOARD
 # Paste additional dashboard visuals and KPIs below this marker.
-# --- Student dashboard addition: blue-teal-green model comparison, predictions, and feature importance ---
+has_extra_dashboard = True
+dashboard_elements = [
+    "KPI cards for best model, MAE, RMSE, and MAPE",
+    "Metrics comparison table",
+    "Model comparison bar chart",
+    "Actual versus predicted line chart",
+    "Random Forest feature importance chart",
+    "Recent actual versus predicted table",
+]
+
+# --- Student dashboard addition: blue-teal-green dashboard ---
 
 if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     st.markdown("#### Forecasting dashboard")
@@ -864,9 +941,9 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
 
     # Blue-teal-green palette
     palette = ["#1f77b4", "#17becf", "#2ca02c"]
-    actual_color = "#1f77b4"      # blue
-    predicted_color = "#2ca02c"   # green
-    feature_color = "#17becf"     # teal
+    actual_color = "#1f77b4"
+    predicted_color = "#2ca02c"
+    feature_color = "#17becf"
 
     # KPI cards
     kpi_1, kpi_2, kpi_3, kpi_4 = st.columns(4)
@@ -879,7 +956,7 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     st.dataframe(results_df, use_container_width=True)
 
     # Model comparison chart
-    st.write("Model comparison by error metrics")
+    st.write("Model comparison by error metric")
 
     metric_choice = st.selectbox(
         "Choose metric for model comparison",
@@ -897,7 +974,7 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     ax.tick_params(axis="x", rotation=20)
     st.pyplot(fig)
 
-    # Actual vs predicted plot for the best model
+    # Actual vs predicted chart
     st.write(f"Actual vs predicted demand — best model: {best_model}")
 
     plot_rows = min(500, len(best_predictions))
@@ -957,12 +1034,15 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
         """
         **Dashboard insight:**  
         This dashboard compares Linear Regression, Random Forest Regressor, and SVR using a time-based 80/20 test split. 
-        The best model is selected by RMSE because RMSE penalizes large forecasting errors more strongly than MAE. 
-        The blue-green prediction chart compares actual demand against the best model's forecast, while the teal feature importance chart explains which baseline features were most useful for the Random Forest model.
+        The best model is selected by RMSE because RMSE penalizes larger forecasting errors. 
+        The actual-versus-predicted chart shows how closely the selected model follows MIS demand patterns. 
+        The Random Forest feature importance chart helps explain which engineered features contribute most to the forecast.
         """
     )
 
 else:
+    has_extra_dashboard = False
+    dashboard_elements = []
     st.info("Run the modeling section first so the dashboard can display metrics and predictions.")
 # ==============================
 

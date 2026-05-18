@@ -805,7 +805,7 @@ st.info(
 # ==============================
 # STUDENT ADDITIONS: DASHBOARD
 # Paste additional dashboard visuals and KPIs below this marker.
-# --- Student dashboard addition: pink model comparison, predictions, and feature importance ---
+# --- Student dashboard addition: blue-teal-green model comparison, predictions, and feature importance ---
 
 if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
     st.markdown("#### Forecasting dashboard")
@@ -816,6 +816,12 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
 
     best_predictions = predictions_df[predictions_df["model"] == best_model].copy()
     best_predictions["residual"] = best_predictions["actual"] - best_predictions["prediction"]
+
+    # Blue-teal-green palette
+    palette = ["#1f77b4", "#17becf", "#2ca02c"]
+    actual_color = "#1f77b4"      # blue
+    predicted_color = "#2ca02c"   # green
+    feature_color = "#17becf"     # teal
 
     # KPI cards
     kpi_1, kpi_2, kpi_3, kpi_4 = st.columns(4)
@@ -836,8 +842,10 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
         index=0,
     )
 
+    bar_colors = [palette[i % len(palette)] for i in range(len(results_df))]
+
     fig, ax = plt.subplots(figsize=(9, 4))
-    ax.bar(results_df["model"], results_df[metric_choice], color="hotpink")
+    ax.bar(results_df["model"], results_df[metric_choice], color=bar_colors)
     ax.set_title(f"Model Comparison by {metric_choice}")
     ax.set_xlabel("Model")
     ax.set_ylabel(metric_choice)
@@ -855,14 +863,14 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
         plot_df[timestamp_column],
         plot_df["actual"],
         label="Actual",
-        color="deeppink",
+        color=actual_color,
         linewidth=2,
     )
     ax.plot(
         plot_df[timestamp_column],
         plot_df["prediction"],
         label="Predicted",
-        color="lightpink",
+        color=predicted_color,
         linewidth=2,
     )
     ax.set_title(f"Actual vs Predicted — {best_model}")
@@ -880,7 +888,7 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
         ax.bar(
             feature_importance_df["feature"],
             feature_importance_df["importance"],
-            color="hotpink",
+            color=feature_color,
         )
         ax.set_title("Random Forest Feature Importance")
         ax.set_xlabel("Feature")
@@ -905,7 +913,7 @@ if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
         **Dashboard insight:**  
         This dashboard compares Linear Regression, Random Forest Regressor, and SVR using a time-based 80/20 test split. 
         The best model is selected by RMSE because RMSE penalizes large forecasting errors more strongly than MAE. 
-        The pink prediction chart compares actual demand against the best model's forecast, while the feature importance chart explains which baseline features were most useful for the Random Forest model.
+        The blue-green prediction chart compares actual demand against the best model's forecast, while the teal feature importance chart explains which baseline features were most useful for the Random Forest model.
         """
     )
 

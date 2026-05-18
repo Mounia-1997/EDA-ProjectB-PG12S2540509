@@ -581,7 +581,212 @@ st.info(
 # Paste your forecasting code below this marker.
 # Keep results_df as a pandas DataFrame with one row per model and columns such as model, MAE, RMSE, and MAPE.
 # Example structure only: create results_df after you build your own model and metrics.
+# --- Student modeling addition: Linear Regression + SVR + LSTM ---
+
+from sklearn.linear_model import LinearRegression
+from sklearn.svm import SVR
+from sklearn.preprocessing import StandardScaler
+
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.callbacks import EarlyStopping
+
 results_df = None
+predictions_df = None
+feature_importance_df = None
+
+if feature_table.empty or len(X) < 150:
+    st.warning("Not enough rows for modeling. Try no resampling or a smaller forecast horizon.")
+else:
+    # Time-based split: first 80% for training, last 20% for testing
+    split_index = int(len(X) * 0.80)
+
+    X_train = X.iloc[:split_index].copy()
+    X_test = X.iloc[split_index:].copy()
+    y_train = y.iloc[:split_index].copy()
+    y_test = y.iloc[split_index:].copy()
+
+    test_time = feature_table[timestamp_column].iloc[split_index:].reset_index(drop=True)
+    actual_values = y_test.reset_index(drop=True)
+
+    def calculate_metrics(y_true, y_pred):
+        y_true_array = np.array(y_true)
+        y_pred_array = np.array(y_pred)
+
+        mae = np.mean(np.abs(y_true_array - y_pred_array))
+        rmse = np.sqrt(np.mean((y_true_array - y_pred_array) ** 2))
+
+        nonzero_mask = y_true_array != 0
+        if nonzero_mask.sum() == 0:
+            mape = np.nan
+        else:
+            mape = np.mean(
+                np.abs(
+                    (y_true_array[nonzero_mask] - y_pred_array[nonzero_mask])
+                    / y_true_array[nonzero_mask]
+                )
+            ) * 100
+
+        return mae, rmse, mape
+
+    model_results = []
+    prediction_frames = []
+
+    # Scale features for SVR and LSTM
+    x_scaler = StandardScaler()
+    X_train_scaled = x_scaler.fit_transform(X_train)
+    X_test_scaled = x_scaler.transform(X_test)
+
+    y_scaler = StandardScaler()
+    y_train_scaled = y_scaler.fit_transform(y_train.values.reshape(-1, 1)).ravel()
+
+    # -----------------------------
+    # Model 1: Linear Regression
+    # -----------------------------
+    linear_model = LinearRegression()
+    linear_model.fit(X_train, y_train)
+    linear_pred = linear_model.predict(X_test)
+
+    linear_mae, linear_rmse, linear_mape = calculate_metrics(y_test, linear_pred)
+
+    model_results.append(
+        {
+            "model": "Linear Regression",
+            "MAE": round(linear_mae, 3),
+            "RMSE": round(linear_rmse, 3),
+            "MAPE": round(linear_mape, 3),
+            "train_rows": len(X_train),
+            "test_rows": len(X_test),
+            "split_type": "time-based 80/20",
+            "forecast_horizon_rows": int(forecast_horizon),
+        }
+    )
+
+    prediction_frames.append(
+        pd.DataFrame(
+            {
+                timestamp_column: test_time,
+                "actual": actual_values,
+                "prediction": linear_pred,
+                "model": "Linear Regression",
+            }
+        )
+    )
+
+    # -----------------------------
+    # Model 2: Support Vector Regression
+    # -----------------------------
+    svr_model = SVR(kernel="rbf", C=100, epsilon=0.1)
+
+    # Use scaled X and scaled y for SVR
+    svr_model.fit(X_train_scaled, y_train_scaled)
+    svr_pred_scaled = svr_model.predict(X_test_scaled)
+    svr_pred = y_scaler.inverse_transform(svr_pred_scaled.reshape(-1, 1)).ravel()
+
+    svr_mae, svr_rmse, svr_mape = calculate_metrics(y_test, svr_pred)
+
+    model_results.append(
+        {
+            "model": "SVR",
+            "MAE": round(svr_mae, 3),
+            "RMSE": round(svr_rmse, 3),
+            "MAPE": round(svr_mape, 3),
+            "train_rows": len(X_train),
+            "test_rows": len(X_test),
+            "split_type": "time-based 80/20",
+            "forecast_horizon_rows": int(forecast_horizon),
+        }
+    )
+
+    prediction_frames.append(
+        pd.DataFrame(
+            {
+                timestamp_column: test_time,
+                "actual": actual_values,
+                "prediction": svr_pred,
+                "model": "SVR",
+            }
+        )
+    )
+
+    # -----------------------------
+    # Model 3: LSTM neural network
+    # -----------------------------
+    # LSTM requires 3D input: samples, time steps, features.
+    # Here each row is treated as one time step using the engineered lag/calendar features.
+    X_train_lstm = X_train_scaled.reshape((X_train_scaled.shape[0], 1, X_train_scaled.shape[1]))
+    X_test_lstm = X_test_scaled.reshape((X_test_scaled.shape[0], 1, X_test_scaled.shape[1]))
+
+    tf.random.set_seed(42)
+
+    lstm_model = Sequential(
+        [
+            LSTM(32, input_shape=(X_train_lstm.shape[1], X_train_lstm.shape[2])),
+            Dropout(0.2),
+            Dense(16, activation="relu"),
+            Dense(1),
+        ]
+    )
+
+    lstm_model.compile(
+        optimizer="adam",
+        loss="mse",
+    )
+
+    early_stop = EarlyStopping(
+        monitor="val_loss",
+        patience=3,
+        restore_best_weights=True,
+    )
+
+    with st.spinner("Training LSTM model..."):
+        lstm_history = lstm_model.fit(
+            X_train_lstm,
+            y_train_scaled,
+            epochs=15,
+            batch_size=64,
+            validation_split=0.2,
+            callbacks=[early_stop],
+            verbose=0,
+        )
+
+    lstm_pred_scaled = lstm_model.predict(X_test_lstm, verbose=0).ravel()
+    lstm_pred = y_scaler.inverse_transform(lstm_pred_scaled.reshape(-1, 1)).ravel()
+
+    lstm_mae, lstm_rmse, lstm_mape = calculate_metrics(y_test, lstm_pred)
+
+    model_results.append(
+        {
+            "model": "LSTM",
+            "MAE": round(lstm_mae, 3),
+            "RMSE": round(lstm_rmse, 3),
+            "MAPE": round(lstm_mape, 3),
+            "train_rows": len(X_train),
+            "test_rows": len(X_test),
+            "split_type": "time-based 80/20",
+            "forecast_horizon_rows": int(forecast_horizon),
+        }
+    )
+
+    prediction_frames.append(
+        pd.DataFrame(
+            {
+                timestamp_column: test_time,
+                "actual": actual_values,
+                "prediction": lstm_pred,
+                "model": "LSTM",
+            }
+        )
+    )
+
+    results_df = pd.DataFrame(model_results).sort_values("RMSE").reset_index(drop=True)
+    predictions_df = pd.concat(prediction_frames, ignore_index=True)
+
+    best_model_name = results_df.iloc[0]["model"]
+
+    st.success("Modeling completed using Linear Regression, SVR, and LSTM.")
+    st.write(f"Best model by RMSE: **{best_model_name}**")
 # ==============================
 
 st.code(
@@ -609,6 +814,94 @@ st.info(
 # ==============================
 # STUDENT ADDITIONS: DASHBOARD
 # Paste additional dashboard visuals and KPIs below this marker.
+if isinstance(results_df, pd.DataFrame) and predictions_df is not None:
+    st.markdown("#### Forecasting dashboard")
+
+    best_row = results_df.sort_values("RMSE").iloc[0]
+    best_model = best_row["model"]
+
+    best_predictions = predictions_df[predictions_df["model"] == best_model].copy()
+    best_predictions["residual"] = best_predictions["actual"] - best_predictions["prediction"]
+
+    # KPI cards
+    kpi_1, kpi_2, kpi_3, kpi_4 = st.columns(4)
+    kpi_1.metric("Best model", best_model)
+    kpi_2.metric("MAE", f"{best_row['MAE']:.2f}")
+    kpi_3.metric("RMSE", f"{best_row['RMSE']:.2f}")
+    kpi_4.metric("MAPE", f"{best_row['MAPE']:.2f}%")
+
+    st.write("Metrics comparison table")
+    st.dataframe(results_df, use_container_width=True)
+
+    # Bar chart comparing model errors
+    st.write("Model comparison by RMSE")
+
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.bar(results_df["model"], results_df["RMSE"])
+    ax.set_title("Model Comparison by RMSE")
+    ax.set_xlabel("Model")
+    ax.set_ylabel("RMSE")
+    ax.tick_params(axis="x", rotation=20)
+    st.pyplot(fig)
+
+    # Actual vs predicted plot for best model
+    st.write(f"Actual vs predicted demand — best model: {best_model}")
+
+    plot_rows = min(500, len(best_predictions))
+    plot_df = best_predictions.tail(plot_rows)
+
+    fig, ax = plt.subplots(figsize=(12, 5))
+    ax.plot(plot_df[timestamp_column], plot_df["actual"], label="Actual")
+    ax.plot(plot_df[timestamp_column], plot_df["prediction"], label="Predicted")
+    ax.set_title(f"Actual vs Predicted — {best_model}")
+    ax.set_xlabel("Time")
+    ax.set_ylabel(target_column)
+    ax.legend()
+    ax.tick_params(axis="x", rotation=30)
+    st.pyplot(fig)
+
+    # Residual line plot
+    st.write("Forecast residuals over time")
+
+    fig, ax = plt.subplots(figsize=(12, 4))
+    ax.plot(plot_df[timestamp_column], plot_df["residual"])
+    ax.axhline(0, linestyle="--")
+    ax.set_title(f"Residuals Over Time — {best_model}")
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Actual - Predicted")
+    ax.tick_params(axis="x", rotation=30)
+    st.pyplot(fig)
+
+    # Residual histogram
+    st.write("Residual distribution")
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    ax.hist(best_predictions["residual"].dropna(), bins=40)
+    ax.set_title(f"Residual Distribution — {best_model}")
+    ax.set_xlabel("Actual - Predicted")
+    ax.set_ylabel("Frequency")
+    st.pyplot(fig)
+
+    # Recent prediction sample
+    st.write("Recent actual vs predicted values")
+    st.dataframe(
+        best_predictions[[timestamp_column, "actual", "prediction", "residual"]]
+        .tail(20)
+        .reset_index(drop=True),
+        use_container_width=True,
+    )
+
+    st.markdown(
+        """
+        **Dashboard insight:**  
+        The dashboard compares Linear Regression, SVR, and LSTM using a time-based test set. 
+        RMSE is used to select the best model because it penalizes large forecasting errors. 
+        The residual plots help identify whether the model is biased or whether errors increase during certain periods.
+        """
+    )
+
+else:
+    st.info("Run the modeling section first so the dashboard can display metrics and predictions.")
 # ==============================
 
 st.code(
